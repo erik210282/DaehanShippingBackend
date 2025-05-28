@@ -13,6 +13,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+app.get("/", (req, res) => {
+  res.send("API de Daehan Shipping funcionando 🚀");
+});
+
 // ✅ Crear usuario
 app.post('/create-user', async (req, res) => {
   const { email, password } = req.body;
