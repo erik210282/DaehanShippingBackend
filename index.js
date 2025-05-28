@@ -1,9 +1,9 @@
-// 📁 backend/index.js
-
 const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+
+// ⚠️ Leer clave de Firebase desde variable de entorno
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -13,8 +13,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ✅ Ruta raíz para verificar funcionamiento
 app.get("/", (req, res) => {
-  res.send("API de Daehan Shipping funcionando 🚀");
+  res.send("🚀 API de Daehan Shipping funcionando");
 });
 
 // ✅ Crear usuario
@@ -70,6 +71,7 @@ app.put('/update-password', async (req, res) => {
   }
 });
 
-app.listen(4000, () => {
-  console.log('Servidor Express escuchando en http://localhost:4000');
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, () => {
+  console.log(`Servidor Express escuchando en http://localhost:${PORT}`);
 });
