@@ -5,8 +5,6 @@ const cors = require('cors');
 const admin = require('firebase-admin');
 const bodyParser = require("body-parser");
 HEAD
-const serviceAccount = require("./firebase-service-account.json");
-
 // ✅ Leer la clave desde variable de entorno (Render)
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
 
