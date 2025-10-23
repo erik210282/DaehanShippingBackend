@@ -12,7 +12,7 @@ app.use(cors());
 app.use(express.json());
 app.use(bodyParser.json());
 
-// 🔒 Middleware de validación de API Key
+// 🔒 Middleware de validación de API Key 
 const validarApiKey = (req, res, next) => {
   const clave = req.headers["x-api-key"];
   if (!clave || clave !== process.env.ADMIN_API_KEY) {
