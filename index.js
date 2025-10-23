@@ -21,42 +21,73 @@ const validarApiKey = (req, res, next) => {
   next();
 };
 
-// ✅ Crear usuario
+// ✅ Crear usuario con rol/activo/display_name y upsert en profiles
 app.post("/create-user", validarApiKey, async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, display_name = "", role = "operador", is_active = true } = req.body;
   if (!email || !password) return res.status(400).json({ error: "Faltan email o password" });
 
   try {
-    const { data, error } = await supabase.auth.admin.createUser({
+    // 1) Crear usuario en Auth con metadatos (útil si luego usas un trigger)
+    const { data: created, error: createErr } = await supabase.auth.admin.createUser({
       email,
       password,
       email_confirm: true,
+      user_metadata: { display_name, role, is_active },
     });
+    if (createErr) return res.status(400).json({ error: createErr.message });
 
-    if (error) return res.status(400).json({ error: error.message });
-    res.status(200).json({ uid: data.user.id });
+    const uid = created.user.id;
+
+    // 2) Crear/actualizar fila en profiles (garantiza que LoginScreen encuentre el perfil)
+    const { error: upsertErr } = await supabase
+      .from("profiles")
+      .upsert({ id: uid, display_name, role, is_active }, { onConflict: "id" });
+    if (upsertErr) return res.status(400).json({ error: upsertErr.message });
+
+    return res.status(200).json({ uid });
   } catch (error) {
-    res.status(500).json({ error: "Error al crear usuario" });
+    console.error("❌ Error al crear usuario:", error);
+    return res.status(500).json({ error: "Error al crear usuario" });
   }
 });
 
-// ✅ Listar usuarios
+// ✅ Listar usuarios + merge con profiles (role, is_active, display_name)
 app.get("/list-users", validarApiKey, async (req, res) => {
   try {
-    const { data, error } = await supabase.auth.admin.listUsers();
+    const { data: authData, error: authErr } = await supabase.auth.admin.listUsers();
+    if (authErr) return res.status(500).json({ error: authErr.message });
 
-    if (error) return res.status(500).json({ error: error.message });
+    const users = authData.users || [];
+    const uids = users.map((u) => u.id);
 
-    const usuarios = data.users.map((u) => ({
-      uid: u.id,
-      email: u.email,
-    }));
+    let profiles = [];
+    if (uids.length > 0) {
+      const { data: profData, error: profErr } = await supabase
+        .from("profiles")
+        .select("id, role, is_active, display_name")
+        .in("id", uids);
+      if (profErr) return res.status(500).json({ error: profErr.message });
+      profiles = profData || [];
+    }
 
-    res.status(200).json({ users: usuarios });
-  } catch {
+    const merged = users.map((u) => {
+      const p = profiles.find((x) => x.id === u.id);
+      return {
+        uid: u.id,
+        email: u.email,
+        role: p?.role ?? "operador",
+        is_active: p?.is_active ?? true,
+        display_name: p?.display_name ?? "",
+      };
+    });
+
+    res.status(200).json({ users: merged });
+  } catch (error) {
+    console.error("❌ Error al listar usuarios:", error);
     res.status(500).json({ error: "Error al listar usuarios" });
   }
 });
+
 
 // ✅ Eliminar usuario
 app.post("/delete-user", validarApiKey, async (req, res) => {
@@ -72,6 +103,30 @@ app.post("/delete-user", validarApiKey, async (req, res) => {
     res.status(500).json({ error: "Error al eliminar usuario" });
   }
 });
+
+
+// ✅ Actualizar rol y/o activo en profiles
+app.post("/update-user-role", validarApiKey, async (req, res) => {
+  const { uid, role, is_active } = req.body;
+  if (!uid) return res.status(400).json({ error: "UID requerido" });
+
+  try {
+    const { error } = await supabase
+      .from("profiles")
+      .update({
+        ...(role ? { role } : {}),
+        ...(typeof is_active === "boolean" ? { is_active } : {}),
+      })
+      .eq("id", uid);
+
+    if (error) return res.status(400).json({ error: error.message });
+    res.status(200).json({ ok: true });
+  } catch (error) {
+    console.error("❌ Error al actualizar rol/activo:", error);
+    res.status(500).json({ error: "Error al actualizar rol/activo" });
+  }
+});
+
 
 // ✅ Actualizar contraseña
 app.post("/update-password", validarApiKey, async (req, res) => {
