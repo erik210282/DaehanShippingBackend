@@ -21,115 +21,168 @@ const validarApiKey = (req, res, next) => {
   next();
 };
 
-// ✅ Crear usuario con rol/activo/display_name y upsert en profiles
-app.post("/create-user", validarApiKey, async (req, res) => {
-  const { email, password, display_name = "", role = "operador", is_active = true } = req.body;
-  if (!email || !password) return res.status(400).json({ error: "Faltan email o password" });
-
-  try {
-    // 1) Crear usuario en Auth con metadatos (útil si luego usas un trigger)
-    const { data: created, error: createErr } = await supabase.auth.admin.createUser({
+  // ✅ Crear usuario con rol/activo/nombre y registrar en operadores
+  app.post("/create-user", validarApiKey, async (req, res) => {
+    const {
       email,
       password,
-      email_confirm: true,
-      user_metadata: { display_name, role, is_active },
-    });
-    if (createErr) return res.status(400).json({ error: createErr.message });
+      nombre = "",
+      role = "operador",
+      is_active = true,
+    } = req.body;
 
-    const uid = created.user.id;
-
-    // 2) Crear/actualizar fila en profiles (garantiza que LoginScreen encuentre el perfil)
-    const { error: upsertErr } = await supabase
-      .from("profiles")
-      .upsert({ id: uid, display_name, role, is_active }, { onConflict: "id" });
-    if (upsertErr) return res.status(400).json({ error: upsertErr.message });
-
-    return res.status(200).json({ uid });
-  } catch (error) {
-    console.error("❌ Error al crear usuario:", error);
-    return res.status(500).json({ error: "Error al crear usuario" });
-  }
-});
-
-// ✅ Listar usuarios + merge con profiles (role, is_active, display_name)
-app.get("/list-users", validarApiKey, async (req, res) => {
-  try {
-    const { data: authData, error: authErr } = await supabase.auth.admin.listUsers();
-    if (authErr) return res.status(500).json({ error: authErr.message });
-
-    const users = authData.users || [];
-    const uids = users.map((u) => u.id);
-
-    let profiles = [];
-    if (uids.length > 0) {
-      const { data: profData, error: profErr } = await supabase
-        .from("profiles")
-        .select("id, role, is_active, display_name")
-        .in("id", uids);
-      if (profErr) return res.status(500).json({ error: profErr.message });
-      profiles = profData || [];
+    if (!email || !password || !nombre) {
+      return res.status(400).json({ error: "Faltan email, password o nombre" });
     }
 
-    const merged = users.map((u) => {
-      const p = profiles.find((x) => x.id === u.id);
-      return {
-        uid: u.id,
-        email: u.email,
-        role: p?.role ?? "operador",
-        is_active: p?.is_active ?? true,
-        display_name: p?.display_name ?? "",
-      };
-    });
+    try {
+      // 1) Crear usuario en Auth con metadatos opcionales
+      const { data: created, error: createErr } = await supabase.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { nombre, role, is_active },
+      });
+      if (createErr) {
+        console.error("❌ Error Supabase Auth createUser:", createErr);
+        return res.status(400).json({ error: createErr.message });
+      }
 
-    res.status(200).json({ users: merged });
-  } catch (error) {
-    console.error("❌ Error al listar usuarios:", error);
-    res.status(500).json({ error: "Error al listar usuarios" });
-  }
-});
+      const uid = created.user.id;
 
+      // 2) Insertar registro en la tabla operadores (tabla maestra)
+      const { error: opErr } = await supabase
+        .from("operadores")
+        .insert([
+          {
+            uid,
+            nombre,
+            email,
+            role,
+            activo: is_active,
+          },
+        ]);
 
-// ✅ Eliminar usuario
-app.post("/delete-user", validarApiKey, async (req, res) => {
-  const { uid } = req.body;
-  if (!uid) return res.status(400).json({ error: "Falta el uid" });
+      if (opErr) {
+        console.error("❌ Error al insertar en operadores:", opErr);
+        // Para no dejar usuarios colgados en Auth si falla operadores:
+        await supabase.auth.admin.deleteUser(uid);
+        return res.status(400).json({ error: opErr.message });
+      }
 
-  try {
-    const { error } = await supabase.auth.admin.deleteUser(uid);
-    if (error) return res.status(400).json({ error: error.message });
+      return res.status(200).json({ uid });
+    } catch (error) {
+      console.error("❌ Error general al crear usuario:", error);
+      return res.status(500).json({ error: "Error al crear usuario" });
+    }
+  });
 
-    res.status(200).json({ message: "Usuario eliminado" });
-  } catch {
-    res.status(500).json({ error: "Error al eliminar usuario" });
-  }
-});
+  // ✅ Listar usuarios usando Auth + tabla operadores (nombre, role, activo, email)
+  app.get("/list-users", validarApiKey, async (req, res) => {
+    try {
+      const { data: authData, error: authErr } = await supabase.auth.admin.listUsers();
+      if (authErr) {
+        console.error("❌ Error listUsers Auth:", authErr);
+        return res.status(500).json({ error: authErr.message });
+      }
 
+      const users = authData.users || [];
+      const uids = users.map((u) => u.id);
 
-// ✅ Actualizar rol y/o activo en profiles
-app.post("/update-user-role", validarApiKey, async (req, res) => {
-  const { uid, role, is_active } = req.body;
-  if (!uid) return res.status(400).json({ error: "UID requerido" });
+      let operadores = [];
+      if (uids.length > 0) {
+        const { data: opsData, error: opsErr } = await supabase
+          .from("operadores")
+          .select("uid, nombre, email, role, activo")
+          .in("uid", uids);
 
-  try {
-    const { error } = await supabase
-      .from("profiles")
-      .update({
+        if (opsErr) {
+          console.error("❌ Error consultando operadores:", opsErr);
+          return res.status(500).json({ error: opsErr.message });
+        }
+
+        operadores = opsData || [];
+      }
+
+      const merged = users.map((u) => {
+        const op = operadores.find((x) => x.uid === u.id);
+        return {
+          uid: u.id,
+          email: op?.email ?? u.email,
+          role: op?.role ?? "operador",
+          is_active: op?.activo ?? true,
+          nombre: op?.nombre ?? "",
+        };
+      });
+
+      res.status(200).json({ users: merged });
+    } catch (error) {
+      console.error("❌ Error al listar usuarios:", error);
+      res.status(500).json({ error: "Error al listar usuarios" });
+    }
+  });
+
+  // ✅ Eliminar usuario: operadores + Auth
+  app.post("/delete-user", validarApiKey, async (req, res) => {
+    const { uid } = req.body;
+    if (!uid) return res.status(400).json({ error: "Falta el uid" });
+
+    try {
+      // 1) Borrar de operadores
+      const { error: opErr } = await supabase
+        .from("operadores")
+        .delete()
+        .eq("uid", uid);
+
+      if (opErr) {
+        console.error("❌ Error borrando en operadores:", opErr);
+        // seguimos, intentamos borrar en Auth de todos modos
+      }
+
+      // 2) Borrar en Auth
+      const { error: authErr } = await supabase.auth.admin.deleteUser(uid);
+      if (authErr) {
+        console.error("❌ Error borrando en Auth:", authErr);
+        return res.status(400).json({ error: authErr.message });
+      }
+
+      res.status(200).json({ message: "Usuario eliminado" });
+    } catch (error) {
+      console.error("❌ Error general al eliminar usuario:", error);
+      res.status(500).json({ error: "Error al eliminar usuario" });
+    }
+  });
+
+  // ✅ Actualizar rol y/o activo en operadores
+  app.post("/update-user-role", validarApiKey, async (req, res) => {
+    const { uid, role, is_active } = req.body;
+    if (!uid) return res.status(400).json({ error: "UID requerido" });
+
+    try {
+      const campos = {
         ...(role ? { role } : {}),
-        ...(typeof is_active === "boolean" ? { is_active } : {}),
-      })
-      .eq("id", uid);
+        ...(typeof is_active === "boolean" ? { activo: is_active } : {}),
+      };
 
-    if (error) return res.status(400).json({ error: error.message });
-    res.status(200).json({ ok: true });
-  } catch (error) {
-    console.error("❌ Error al actualizar rol/activo:", error);
-    res.status(500).json({ error: "Error al actualizar rol/activo" });
-  }
-});
+      if (Object.keys(campos).length === 0) {
+        return res.status(400).json({ error: "Nada que actualizar" });
+      }
 
+      const { error } = await supabase
+        .from("operadores")
+        .update(campos)
+        .eq("uid", uid);
 
-// ✅ Actualizar contraseña
-app.post("/update-password", validarApiKey, async (req, res) => {
+      if (error) return res.status(400).json({ error: error.message });
+      res.status(200).json({ ok: true });
+    } catch (error) {
+      console.error("❌ Error al actualizar rol/activo:", error);
+      res.status(500).json({ error: "Error al actualizar rol/activo" });
+    }
+  });
+
+  // ✅ Actualizar contraseña
+  app.post("/update-password", validarApiKey, async (req, res) => {
   const { uid, password } = req.body;
   if (!uid || !password) {
     return res.status(400).json({ error: "Faltan datos: uid o contraseña" });
@@ -146,15 +199,15 @@ app.post("/update-password", validarApiKey, async (req, res) => {
   } catch {
     res.status(500).json({ error: "Error al actualizar contraseña" });
   }
-});
+  });
 
-// ✅ Ruta pública
-app.get("/", (req, res) => {
+  // ✅ Ruta pública
+  app.get("/", (req, res) => {
   res.send("Backend de Daehan Shipping activo");
-});
+  });
 
-// ✅ Puerto
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+  // ✅ Puerto
+  const PORT = process.env.PORT || 3001;
+  app.listen(PORT, () => {
   console.log(`Servidor escuchando en puerto ${PORT}`);
-});
+  });
