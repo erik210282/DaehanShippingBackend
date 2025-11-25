@@ -45,7 +45,10 @@ const validarApiKey = (req, res, next) => {
       });
       if (createErr) {
         console.error("❌ Error Supabase Auth createUser:", createErr);
-        return res.status(400).json({ error: createErr.message });
+        return res.status(400).json({
+          error: createErr.message || "Auth error",
+          details: createErr,     
+        });
       }
 
       const uid = created.user.id;
@@ -65,9 +68,11 @@ const validarApiKey = (req, res, next) => {
 
       if (opErr) {
         console.error("❌ Error al insertar en operadores:", opErr);
-        // Para no dejar usuarios colgados en Auth si falla operadores:
         await supabase.auth.admin.deleteUser(uid);
-        return res.status(400).json({ error: opErr.message });
+        return res.status(400).json({
+          error: opErr.message || "DB error",
+          details: opErr,
+        });
       }
 
       return res.status(200).json({ uid });
