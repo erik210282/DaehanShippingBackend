@@ -127,12 +127,37 @@ const validarApiKey = (req, res, next) => {
     }
   });
 
-  // ✅ Eliminar usuario: operadores + Auth
+  // ✅ Eliminar usuario: SOLO si no tiene registros; si tiene, obligar a inactivarlo
   app.post("/delete-user", validarApiKey, async (req, res) => {
     const { uid } = req.body;
     if (!uid) return res.status(400).json({ error: "Falta el uid" });
 
     try {
+      // 0) Verificar si tiene registros en actividades / tareas
+      const { count: actsCount, error: actsErr } = await supabase
+        .from("actividades_realizadas")
+        .select("id", { count: "exact", head: true })
+        .eq("uid_operador", uid);
+
+      const { count: tareasCount, error: tareasErr } = await supabase
+        .from("tareas_pendientes")
+        .select("id", { count: "exact", head: true })
+        .eq("uid_operador", uid);
+
+      if (actsErr || tareasErr) {
+        console.error("❌ Error verificando registros asociados:", actsErr || tareasErr);
+        return res
+          .status(500)
+          .json({ error: "Error verificando registros asociados" });
+      }
+
+      if ((actsCount ?? 0) > 0 || (tareasCount ?? 0) > 0) {
+        // Tiene registros; NO permitir borrar
+        return res
+          .status(400)
+          .json({ error: "user_has_linked_records" });
+      }
+
       // 1) Borrar de operadores
       const { error: opErr } = await supabase
         .from("operadores")
@@ -141,7 +166,7 @@ const validarApiKey = (req, res, next) => {
 
       if (opErr) {
         console.error("❌ Error borrando en operadores:", opErr);
-        // seguimos, intentamos borrar en Auth de todos modos
+        return res.status(400).json({ error: opErr.message });
       }
 
       // 2) Borrar en Auth
