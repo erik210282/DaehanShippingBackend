@@ -134,7 +134,7 @@ const validarApiKey = (req, res, next) => {
 
     try {
       // 0) Verificar si tiene registros en actividades / tareas
-      const { count: actsCount, error: actsErr } = await supabase
+        const { count: actsCount, error: actsErr } = await supabase
         .from("actividades_realizadas")
         .select("id", { count: "exact", head: true })
         .eq("uid_operador", uid);
@@ -146,16 +146,13 @@ const validarApiKey = (req, res, next) => {
 
       if (actsErr || tareasErr) {
         console.error("❌ Error verificando registros asociados:", actsErr || tareasErr);
-        return res
-          .status(500)
-          .json({ error: "Error verificando registros asociados" });
+        // 🧱 Cualquier problema al verificar = tratar como que tiene registros
+        return res.status(400).json({ error: "user_has_linked_records" });
       }
 
       if ((actsCount ?? 0) > 0 || (tareasCount ?? 0) > 0) {
         // Tiene registros; NO permitir borrar
-        return res
-          .status(400)
-          .json({ error: "user_has_linked_records" });
+        return res.status(400).json({ error: "user_has_linked_records" });
       }
 
       // 1) Borrar de operadores
