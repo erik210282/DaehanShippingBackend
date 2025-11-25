@@ -27,7 +27,7 @@ const validarApiKey = (req, res, next) => {
       email,
       password,
       nombre = "",
-      role = "operador",
+      role = "",
       is_active = true,
     } = req.body;
 
@@ -41,7 +41,7 @@ const validarApiKey = (req, res, next) => {
         email,
         password,
         email_confirm: true,
-        user_metadata: { nombre, role, is_active },
+        user_metadata: { nombre, role, is_active, full_name: nombre },
       });
       if (createErr) {
         console.error("❌ Error Supabase Auth createUser:", createErr);
