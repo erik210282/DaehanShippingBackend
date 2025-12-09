@@ -44,7 +44,7 @@ const validarApiKey = (req, res, next) => {
         user_metadata: { nombre, role, is_active, full_name: nombre },
       });
       if (createErr) {
-        console.error("❌ Error Supabase Auth createUser:", createErr);
+
         return res.status(400).json({
           error: createErr.message || "Auth error",
           details: createErr,     
@@ -67,7 +67,6 @@ const validarApiKey = (req, res, next) => {
         ]);
 
       if (opErr) {
-        console.error("❌ Error al insertar en operadores:", opErr);
         await supabase.auth.admin.deleteUser(uid);
         return res.status(400).json({
           error: opErr.message || "DB error",
@@ -77,7 +76,6 @@ const validarApiKey = (req, res, next) => {
 
       return res.status(200).json({ uid });
     } catch (error) {
-      console.error("❌ Error general al crear usuario:", error);
       return res.status(500).json({ error: "Error al crear usuario" });
     }
   });
@@ -87,7 +85,6 @@ const validarApiKey = (req, res, next) => {
     try {
       const { data: authData, error: authErr } = await supabase.auth.admin.listUsers();
       if (authErr) {
-        console.error("❌ Error listUsers Auth:", authErr);
         return res.status(500).json({ error: authErr.message });
       }
 
@@ -102,7 +99,6 @@ const validarApiKey = (req, res, next) => {
           .in("uid", uids);
 
         if (opsErr) {
-          console.error("❌ Error consultando operadores:", opsErr);
           return res.status(500).json({ error: opsErr.message });
         }
 
@@ -122,7 +118,6 @@ const validarApiKey = (req, res, next) => {
 
       res.status(200).json({ users: merged });
     } catch (error) {
-      console.error("❌ Error al listar usuarios:", error);
       res.status(500).json({ error: "Error al listar usuarios" });
     }
   });
@@ -145,7 +140,6 @@ const validarApiKey = (req, res, next) => {
         .eq("uid_operador", uid);
 
       if (actsErr || tareasErr) {
-        console.error("❌ Error verificando registros asociados:", actsErr || tareasErr);
         // 🧱 Cualquier problema al verificar = tratar como que tiene registros
         return res.status(400).json({ error: "user_has_linked_records" });
       }
@@ -162,20 +156,17 @@ const validarApiKey = (req, res, next) => {
         .eq("uid", uid);
 
       if (opErr) {
-        console.error("❌ Error borrando en operadores:", opErr);
         return res.status(400).json({ error: opErr.message });
       }
 
       // 2) Borrar en Auth
       const { error: authErr } = await supabase.auth.admin.deleteUser(uid);
       if (authErr) {
-        console.error("❌ Error borrando en Auth:", authErr);
         return res.status(400).json({ error: authErr.message });
       }
 
       res.status(200).json({ message: "Usuario eliminado" });
     } catch (error) {
-      console.error("❌ Error general al eliminar usuario:", error);
       res.status(500).json({ error: "Error al eliminar usuario" });
     }
   });
@@ -203,7 +194,6 @@ const validarApiKey = (req, res, next) => {
       if (error) return res.status(400).json({ error: error.message });
       res.status(200).json({ ok: true });
     } catch (error) {
-      console.error("❌ Error al actualizar rol/activo:", error);
       res.status(500).json({ error: "Error al actualizar rol/activo" });
     }
   });
@@ -236,5 +226,4 @@ const validarApiKey = (req, res, next) => {
   // ✅ Puerto
   const PORT = process.env.PORT || 3001;
   app.listen(PORT, () => {
-  console.log(`Servidor escuchando en puerto ${PORT}`);
   });
