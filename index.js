@@ -21,6 +21,19 @@ const validarApiKey = (req, res, next) => {
   next();
 };
 
+const validarSupervisor = async (req, res, next) => {
+  const token = req.headers.authorization?.match(/^Bearer (.+)$/i)?.[1];
+  if (!token) return res.status(401).json({ error: "Sesión requerida" });
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  if (error || !user) return res.status(401).json({ error: "Sesión inválida" });
+  const { data: profile } = await supabase.from("operadores")
+    .select("role, activo").eq("uid", user.id).maybeSingle();
+  if (profile?.role !== "supervisor" || profile.activo !== true) {
+    return res.status(403).json({ error: "Supervisor activo requerido" });
+  }
+  next();
+};
+
   // ✅ Crear usuario con rol/activo/nombre y registrar en operadores
   app.post("/create-user", validarApiKey, async (req, res) => {
     const {
@@ -72,6 +85,17 @@ const validarApiKey = (req, res, next) => {
           error: opErr.message || "DB error",
           details: opErr,
         });
+      }
+
+      if (!is_active) {
+        const { error: banErr } = await supabase.auth.admin.updateUserById(uid, {
+          ban_duration: "876000h",
+        });
+        if (banErr) {
+          await supabase.from("operadores").delete().eq("uid", uid);
+          await supabase.auth.admin.deleteUser(uid);
+          return res.status(400).json({ error: banErr.message });
+        }
       }
 
       return res.status(200).json({ uid });
@@ -172,11 +196,15 @@ const validarApiKey = (req, res, next) => {
   });
 
   // ✅ Actualizar rol y/o activo en operadores
-  app.post("/update-user-role", validarApiKey, async (req, res) => {
+  app.post("/update-user-role", validarApiKey, validarSupervisor, async (req, res) => {
     const { uid, role, is_active } = req.body;
     if (!uid) return res.status(400).json({ error: "UID requerido" });
 
     try {
+      const { data: previous, error: readError } = await supabase.from("operadores")
+        .select("activo").eq("uid", uid).maybeSingle();
+      if (readError || !previous) return res.status(404).json({ error: "Operador no encontrado" });
+
       const campos = {
         ...(role ? { role } : {}),
         ...(typeof is_active === "boolean" ? { activo: is_active } : {}),
@@ -186,12 +214,26 @@ const validarApiKey = (req, res, next) => {
         return res.status(400).json({ error: "Nada que actualizar" });
       }
 
+      if (typeof is_active === "boolean") {
+        const { error: authError } = await supabase.auth.admin.updateUserById(uid, {
+          ban_duration: is_active ? "none" : "876000h",
+        });
+        if (authError) return res.status(400).json({ error: authError.message });
+      }
+
       const { error } = await supabase
         .from("operadores")
         .update(campos)
         .eq("uid", uid);
 
-      if (error) return res.status(400).json({ error: error.message });
+      if (error) {
+        if (typeof is_active === "boolean") {
+          await supabase.auth.admin.updateUserById(uid, {
+            ban_duration: previous.activo ? "none" : "876000h",
+          });
+        }
+        return res.status(400).json({ error: error.message });
+      }
       res.status(200).json({ ok: true });
     } catch (error) {
       res.status(500).json({ error: "Error al actualizar rol/activo" });
@@ -227,3 +269,18 @@ const validarApiKey = (req, res, next) => {
   const PORT = process.env.PORT || 3001;
   app.listen(PORT, () => {
   });
+
+  // Accounts disabled before this endpoint was introduced must also be banned
+  // in Auth. Reconcile in the background on each deployment without changing
+  // their historical operator rows.
+  (async () => {
+    const { data, error } = await supabase.from("operadores")
+      .select("uid").eq("activo", false).not("uid", "is", null);
+    if (error) return;
+    for (const operator of data || []) {
+      try {
+        const { error: banError } = await supabase.auth.admin.updateUserById(operator.uid, { ban_duration: "876000h" });
+        if (banError) console.error("Could not synchronize inactive Auth account", banError.message);
+      } catch (error) { console.error("Could not synchronize inactive Auth account", error.message); }
+    }
+  })();
