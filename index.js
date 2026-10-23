@@ -12,6 +12,18 @@ app.use(cors());
 app.use(express.json());
 app.use(bodyParser.json());
 
+// User administration moved to the authenticated, department-scoped Supabase API.
+// Do not accept the retired browser-shared API key for privileged operations.
+const retiredUserRoutes = new Set(['/create-user','/list-users','/delete-user','/update-user-role','/update-password']);
+app.use((req,res,next)=>{
+  const path=req.path.toLowerCase().replace(/\/+$/,'');
+  if(retiredUserRoutes.has(path)||path.startsWith('/delete-user/')){
+    return res.status(410).json({error:'user_admin_moved',message:'Use Global Settings with an authenticated session.'});
+  }
+  next();
+});
+
+
 // 🔒 Middleware de validación de API Key 
 const validarApiKey = (req, res, next) => {
   const clave = req.headers["x-api-key"];
@@ -284,3 +296,5 @@ const validarSupervisor = async (req, res, next) => {
       } catch (error) { console.error("Could not synchronize inactive Auth account", error.message); }
     }
   })();
+
+
